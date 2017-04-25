@@ -7,7 +7,7 @@ numpy, pydicom, Pillow, os, csv
 
 ## Files
 
-DicomReader.ipynb : notebook with analysis, questions, tests, and plots
+Analysis.ipynb : notebook with analysis, questions, tests, and plots
 
 ImagePipeline.py : class library including ImageTools, DicomReader, DicomContourReader, ImagePipeline
 
