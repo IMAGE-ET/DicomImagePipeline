@@ -9,8 +9,7 @@ from PIL import Image, ImageDraw
 import os,csv
 
 class ImageTools():
-	""" Collection of image tools"""
-
+    """ General Image Tools """
     def parse_contour_file(self,filename):
         """Parse the given contour filename
 
@@ -90,7 +89,7 @@ class ImageTools():
 
 
 class DicomReader(ImageTools):
-	""" Parses and reads dicom images in a dicom directory dcmPath"""
+    """ Parses and reads dicom images in a dicom directory dcmPath"""
     def __init__(self,dcmPath):
         self.dcmPath = dcmPath
         self.dcmFileList = []# list of all file names 
@@ -155,7 +154,7 @@ class DicomReader(ImageTools):
 
 
 class DicomContourReader(DicomReader):
-	""" Parses Dicom images and corresponding contours"""
+    """ Parses Dicom images and corresponding contours"""
     def __init__(self,dcmPath,contourPath):
         DicomReader.__init__(self,dcmPath)
         self.contourPath     = contourPath
@@ -246,6 +245,132 @@ class DicomContourReader(DicomReader):
         mask       = self.poly_to_mask(polyCoords,dcmData['width'], dcmData['height'])
 
         return (dcmData['pixel_data'],mask)  
+
+
+class ImagePipeline(ImageTools):
+    """ Image Pipeline for dicom image"""
+    def __init__(self,dcmPath,contourPath,linkFile):
+        
+        self.dcmPath  = dcmPath
+        self.contPath = contourPath
+        self.linkFile = linkFile
+        self.linkDict = {}
+        
+        self.allFilePairs = []
+        
+        self.imaHeight =256
+        self.imaWidth  =256
+        
+        self.dataIndex = []
+        self.batchStart = None # including
+        self.batchEnd  = None  # excluding 
+        self.batchSize = 8
+        
+        self.read_link_file()
+        self.getAllFiles()
+        
+    def read_link_file(self):
+        """ import the link file """
+        
+        try:
+            with open(self.linkFile, "r") as csvfile:
+                reader = csv.reader(csvfile)
+                next(reader, None)  # skip the headers
+                for row in reader:
+                    if len(row)==2: 
+                        self.linkDict[row[0]] = row[1]
+                    else:
+                        print "Warning: unknown format"
+        except IOError as err:
+            print "Error: ", err.args, self.linkFile
+            return
+        
+        
+    def getAllFiles(self):
+        """ Read all files"""
+        
+        for key in sorted(self.linkDict.keys()):
+            
+            dcmDir  = os.path.join(self.dcmPath, key )
+            contDir = os.path.join(self.contPath, self.linkDict[key],'i-contours')
+            
+            if not (os.path.isdir(dcmDir) and os.path.isdir(contDir)):
+                print "Warning: invalid directories ", dcmDir, contDir
+                continue
+                
+            dc = DicomContourReader(dcmDir,contDir)
+            self.allFilePairs += dc.getAllFilePairs()
+            
+            self._ndata = len(self.allFilePairs)
+            print "Total # files: {}".format(self._ndata)
+            
+            
+    def resetBatchOrder(self):
+        """ Reset or initialize batch order and reshuffle"""
+        self.batchStart= 0
+        self.batchEnd  = self.batchStart+self.batchSize
+        
+        if len(self.dataIndex)==0:
+            self.dataIndex = range(self._ndata)
+        
+        np.random.shuffle(self.dataIndex )
+        
+    
+    def getNextBatchIndices(self):
+        """ Create new set of data indeces for new batch of files"""
+        
+        if self.batchStart == None:
+            self.resetBatchOrder()
+        else:   
+            # increment
+            self.batchStart += self.batchSize
+            self.batchEnd   += self.batchSize
+            
+            if self.batchEnd>self._ndata:
+                self.resetBatchOrder()
+
+        
+        return self.dataIndex[self.batchStart:self.batchEnd]
+    
+    
+    def getNextBatch(self):
+        """ Get new batch of images and masks"""
+        
+        batchIdx = self.getNextBatchIndices()
+        
+        imaBatch = np.zeros((self.batchSize, self.imaHeight, self.imaWidth))
+        maskBatch = np.zeros((self.batchSize, self.imaHeight, self.imaWidth),dtype=bool)
+        
+        for k in range(len(batchIdx)):
+            
+            idx = self.dataIndex[batchIdx[k]]
+            dcmFile,contFile = self.allFilePairs[ idx ]
+            
+            # dicom
+            dcmData = self.parse_dicom_file(dcmFile)
+            
+            if dcmData['height']!=self.imaHeight or dcmData['width']!=self.imaWidth:
+                print "Error: image format don't match"
+                return
+            
+            imaBatch[k] = dcmData['pixel_data']
+            
+            # contour
+            polyCoords   = self.parse_contour_file(contFile)
+            maskBatch[k] = self.poly_to_mask(polyCoords,self.imaWidth, self.imaHeight)
+
+           
+        return imaBatch, maskBatch
+            
+            
+         
+            
+                                   
+            
+                    
+        
+
+
 
 if __name__ == "__main__":
     main()
